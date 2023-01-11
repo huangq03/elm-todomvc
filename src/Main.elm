@@ -58,7 +58,7 @@ updateWithStorage msg model =
 
 -- The full application state of our todo app.
 type alias Model =
-    { entries : List Todo
+    { entries : List (Todo, Bool)
     , field : String
     , visibility : String
     }
@@ -72,7 +72,6 @@ type alias Todo =
     , todoId : Int
     , repeatType: String
     , status: String
-    , editing : Bool
     }
 
 
@@ -93,7 +92,6 @@ newTodo desc =
     , todoId = 0
     , repeatType = ""
     , status = "Ongoing"
-    , editing = False
     }
 
 getTodos : Cmd Msg
@@ -108,7 +106,7 @@ todosDecoder = Json.list todoDecoder
 
 todoDecoder : Json.Decoder Todo
 todoDecoder =
-  Json.map8 Todo
+  Json.map7 Todo
     (Json.field "content" Json.string)
     (Json.field "deadline" Json.int)
     (Json.field "done" Json.bool)
@@ -116,7 +114,6 @@ todoDecoder =
     (Json.field "todoId" Json.int)
     (Json.field "repeatType" Json.string)
     (Json.field "status" Json.string)
-    (Json.field "editing" Json.bool)
 
 init : Maybe Model -> ( Model, Cmd Msg )
 init maybeModel =
@@ -158,7 +155,10 @@ update msg model =
         TodosReceived result ->
           case result of
             Ok todos ->
-              ( { model | entries = todos }, Cmd.none )
+              let
+                  todo2Entry t = (t, False)
+              in
+              ( { model | entries = List.map todo2Entry todos }, Cmd.none )
             Err _ ->
               (  model, Cmd.none )
         Add ->
@@ -168,7 +168,7 @@ update msg model =
                     if String.isEmpty model.field then
                         model.entries
                     else
-                        model.entries ++ [ newTodo model.field ]
+                        model.entries ++ [ (newTodo model.field, False) ]
               }
             , Cmd.none
             )
@@ -180,11 +180,11 @@ update msg model =
 
         EditingTodo id isEditing ->
             let
-                updateTodo t =
+                updateTodo (t, e) =
                     if t.todoLogId == id then
-                        { t | editing = isEditing }
+                        ( t, isEditing )
                     else
-                        t
+                        ( t, e )
 
                 focus =
                     Dom.focus ("todo-" ++ String.fromInt id)
@@ -195,33 +195,33 @@ update msg model =
 
         UpdateTodo id task ->
             let
-                updateTodo t =
+                updateTodo (t, e) =
                     if t.todoLogId == id then
-                        { t | content = task }
+                        ( { t | content = task }, e )
                     else
-                        t
+                        ( t, e )
             in
             ( { model | entries = List.map updateTodo model.entries }
             , Cmd.none
             )
 
         Delete id ->
-            ( { model | entries = List.filter (\t -> t.todoLogId /= id) model.entries }
+            ( { model | entries = List.filter (checkTodoById id) model.entries }
             , Cmd.none
             )
 
         DeleteComplete ->
-            ( { model | entries = List.filter (not << .done) model.entries }
+            ( { model | entries = List.filter (checkTodoByDone False) model.entries }
             , Cmd.none
             )
 
         Check id isCompleted ->
             let
-                updateTodo t =
+                updateTodo (t, e) =
                     if t.todoLogId == id then
-                        { t | done = isCompleted }
+                        (t, isCompleted)
                     else
-                        t
+                        (t, e)
             in
             ( { model | entries = List.map updateTodo model.entries }
             , Cmd.none
@@ -229,8 +229,8 @@ update msg model =
 
         CheckAll isCompleted ->
             let
-                updateTodo t =
-                    { t | done = isCompleted }
+                updateTodo (t, _) =
+                    (t, isCompleted)
             in
             ( { model | entries = List.map updateTodo model.entries }
             , Cmd.none
@@ -296,10 +296,10 @@ onEnter msg =
 -- VIEW ALL ENTRIES
 
 
-viewEntries : String -> List Todo -> Html.Html Msg
+viewEntries : String -> List (Todo, Bool) -> Html.Html Msg
 viewEntries visibility entries =
     let
-        isVisible todo =
+        isVisible (todo, _) =
             case visibility of
                 "Completed" ->
                     todo.done
@@ -311,7 +311,7 @@ viewEntries visibility entries =
                     True
 
         allCompleted =
-            List.all .done entries
+            List.all (checkTodoByDone True) entries
 
         cssVisibility =
             if List.isEmpty entries then
@@ -343,15 +343,15 @@ viewEntries visibility entries =
 -- VIEW INDIVIDUAL ENTRIES
 
 
-viewKeyedTodo : Todo -> ( String, Html.Html Msg )
-viewKeyedTodo todo =
-    ( String.fromInt todo.todoLogId, lazy viewTodo todo )
+viewKeyedTodo : (Todo, Bool) -> ( String, Html.Html Msg )
+viewKeyedTodo (todo, editing) =
+    ( String.fromInt todo.todoLogId, lazy viewTodo (todo, editing ))
 
 
-viewTodo : Todo -> Html.Html Msg
-viewTodo todo =
+viewTodo : (Todo, Bool) -> Html.Html Msg
+viewTodo (todo, editing) =
     Html.li
-        [ classList [ ( "done", todo.done ), ( "editing", todo.editing ) ] ]
+        [ classList [ ( "done", todo.done ), ( "editing", editing ) ] ]
         [ Html.div
             [ class "view" ]
             [ Html.input
@@ -387,11 +387,11 @@ viewTodo todo =
 -- VIEW CONTROLS AND FOOTER
 
 
-viewControls : String -> List Todo -> Html.Html Msg
+viewControls : String -> List (Todo, Bool) -> Html.Html Msg
 viewControls visibility entries =
     let
         entriesCompleted =
-            List.length (List.filter .done entries)
+            List.length (List.filter (checkTodoByDone True) entries)
 
         entriesLeft =
             List.length entries - entriesCompleted
@@ -467,3 +467,17 @@ infoFooter =
             , Html.a [ href "http://todomvc.com" ] [ Html.text "TodoMVC" ]
             ]
         ]
+
+checkTodoById : Int -> (Todo, Bool) -> Bool
+checkTodoById id (t ,e) =
+  if t.todoLogId == id then
+    True
+  else
+    False
+
+checkTodoByDone : Bool -> (Todo, Bool) -> Bool
+checkTodoByDone done (t, e) =
+  if t.done == done then
+    True
+  else
+    False
