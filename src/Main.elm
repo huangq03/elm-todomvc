@@ -14,7 +14,8 @@ this in <http://guide.elm-lang.org/architecture/index.html>
 
 import Browser
 import Browser.Dom as Dom
-import Html exposing (..)
+import Http
+import Html
 import Html.Attributes exposing (..)
 import Html.Events exposing (..)
 import Html.Keyed as Keyed
@@ -57,13 +58,13 @@ updateWithStorage msg model =
 
 -- The full application state of our todo app.
 type alias Model =
-    { entries : List Entry
+    { entries : List Todo
     , field : String
     , visibility : String
     }
 
 
-type alias Entry =
+type alias Todo =
     { content : String
     , deadline : Int
     , done : Bool
@@ -83,8 +84,8 @@ emptyModel =
     }
 
 
-newEntry : String -> Entry
-newEntry desc =
+newTodo : String -> Todo
+newTodo desc =
     { content = desc
     , deadline = 0
     , done = False
@@ -95,11 +96,32 @@ newEntry desc =
     , editing = False
     }
 
+getTodos : Cmd Msg
+getTodos =
+  Http.get
+    { url = "/api/todolog"
+    , expect = Http.expectJson TodosReceived todosDecoder
+    }
+
+todosDecoder : Json.Decoder (List Todo)
+todosDecoder = Json.list todoDecoder
+
+todoDecoder : Json.Decoder Todo
+todoDecoder =
+  Json.map8 Todo
+    (Json.field "content" Json.string)
+    (Json.field "deadline" Json.int)
+    (Json.field "done" Json.bool)
+    (Json.field "todoLogId" Json.int)
+    (Json.field "todoId" Json.int)
+    (Json.field "repeatType" Json.string)
+    (Json.field "status" Json.string)
+    (Json.field "editing" Json.bool)
 
 init : Maybe Model -> ( Model, Cmd Msg )
 init maybeModel =
   ( Maybe.withDefault emptyModel maybeModel
-  , Cmd.none
+  , getTodos
   )
 
 
@@ -114,14 +136,15 @@ to them.
 type Msg
     = NoOp
     | UpdateField String
-    | EditingEntry Int Bool
-    | UpdateEntry Int String
+    | EditingTodo Int Bool
+    | UpdateTodo Int String
     | Add
     | Delete Int
     | DeleteComplete
     | Check Int Bool
     | CheckAll Bool
     | ChangeVisibility String
+    | TodosReceived (Result Http.Error (List Todo))
 
 
 
@@ -132,6 +155,12 @@ update msg model =
         NoOp ->
             ( model, Cmd.none )
 
+        TodosReceived result ->
+          case result of
+            Ok todos ->
+              ( { model | entries = todos }, Cmd.none )
+            Err _ ->
+              (  model, Cmd.none )
         Add ->
             ( { model
                 | field = ""
@@ -139,7 +168,7 @@ update msg model =
                     if String.isEmpty model.field then
                         model.entries
                     else
-                        model.entries ++ [ newEntry model.field ]
+                        model.entries ++ [ newTodo model.field ]
               }
             , Cmd.none
             )
@@ -149,9 +178,9 @@ update msg model =
             , Cmd.none
             )
 
-        EditingEntry id isEditing ->
+        EditingTodo id isEditing ->
             let
-                updateEntry t =
+                updateTodo t =
                     if t.todoLogId == id then
                         { t | editing = isEditing }
                     else
@@ -160,19 +189,19 @@ update msg model =
                 focus =
                     Dom.focus ("todo-" ++ String.fromInt id)
             in
-            ( { model | entries = List.map updateEntry model.entries }
+            ( { model | entries = List.map updateTodo model.entries }
             , Task.attempt (\_ -> NoOp) focus
             )
 
-        UpdateEntry id task ->
+        UpdateTodo id task ->
             let
-                updateEntry t =
+                updateTodo t =
                     if t.todoLogId == id then
                         { t | content = task }
                     else
                         t
             in
-            ( { model | entries = List.map updateEntry model.entries }
+            ( { model | entries = List.map updateTodo model.entries }
             , Cmd.none
             )
 
@@ -188,22 +217,22 @@ update msg model =
 
         Check id isCompleted ->
             let
-                updateEntry t =
+                updateTodo t =
                     if t.todoLogId == id then
                         { t | done = isCompleted }
                     else
                         t
             in
-            ( { model | entries = List.map updateEntry model.entries }
+            ( { model | entries = List.map updateTodo model.entries }
             , Cmd.none
             )
 
         CheckAll isCompleted ->
             let
-                updateEntry t =
+                updateTodo t =
                     { t | done = isCompleted }
             in
-            ( { model | entries = List.map updateEntry model.entries }
+            ( { model | entries = List.map updateTodo model.entries }
             , Cmd.none
             )
 
@@ -217,13 +246,13 @@ update msg model =
 -- VIEW
 
 
-view : Model -> Html Msg
+view : Model -> Html.Html Msg
 view model =
-    div
+    Html.div
         [ class "todomvc-wrapper"
         , style "visibility" "hidden"
         ]
-        [ section
+        [ Html.section
             [ class "todoapp" ]
             [ lazy viewInput model.field
             , lazy2 viewEntries model.visibility model.entries
@@ -233,12 +262,12 @@ view model =
         ]
 
 
-viewInput : String -> Html Msg
+viewInput : String -> Html.Html Msg
 viewInput task =
-    header
+    Html.header
         [ class "header" ]
-        [ h1 [] [ text "todos" ]
-        , input
+        [ Html.h1 [] [ Html.text "todos" ]
+        , Html.input
             [ class "new-todo"
             , placeholder "What needs to be done?"
             , autofocus True
@@ -251,7 +280,7 @@ viewInput task =
         ]
 
 
-onEnter : Msg -> Attribute Msg
+onEnter : Msg -> Html.Attribute Msg
 onEnter msg =
     let
         isEnter code =
@@ -267,7 +296,7 @@ onEnter msg =
 -- VIEW ALL ENTRIES
 
 
-viewEntries : String -> List Entry -> Html Msg
+viewEntries : String -> List Todo -> Html.Html Msg
 viewEntries visibility entries =
     let
         isVisible todo =
@@ -290,11 +319,11 @@ viewEntries visibility entries =
             else
                 "visible"
     in
-        section
+        Html.section
             [ class "main"
             , style "visibility" cssVisibility
             ]
-            [ input
+            [ Html.input
                 [ class "toggle-all"
                 , type_ "checkbox"
                 , name "toggle"
@@ -302,11 +331,11 @@ viewEntries visibility entries =
                 , onClick (CheckAll (not allCompleted))
                 ]
                 []
-            , label
+            , Html.label
                 [ for "toggle-all" ]
-                [ text "Mark all as complete" ]
+                [ Html.text "Mark all as complete" ]
             , Keyed.ul [ class "todo-list" ] <|
-                List.map viewKeyedEntry (List.filter isVisible entries)
+                List.map viewKeyedTodo (List.filter isVisible entries)
             ]
 
 
@@ -314,41 +343,41 @@ viewEntries visibility entries =
 -- VIEW INDIVIDUAL ENTRIES
 
 
-viewKeyedEntry : Entry -> ( String, Html Msg )
-viewKeyedEntry todo =
-    ( String.fromInt todo.todoLogId, lazy viewEntry todo )
+viewKeyedTodo : Todo -> ( String, Html.Html Msg )
+viewKeyedTodo todo =
+    ( String.fromInt todo.todoLogId, lazy viewTodo todo )
 
 
-viewEntry : Entry -> Html Msg
-viewEntry todo =
-    li
+viewTodo : Todo -> Html.Html Msg
+viewTodo todo =
+    Html.li
         [ classList [ ( "done", todo.done ), ( "editing", todo.editing ) ] ]
-        [ div
+        [ Html.div
             [ class "view" ]
-            [ input
+            [ Html.input
                 [ class "toggle"
                 , type_ "checkbox"
                 , checked todo.done
                 , onClick (Check todo.todoLogId (not todo.done))
                 ]
                 []
-            , label
-                [ onDoubleClick (EditingEntry todo.todoLogId True) ]
-                [ text todo.content ]
-            , button
+            , Html.label
+                [ onDoubleClick (EditingTodo todo.todoLogId True) ]
+                [ Html.text todo.content ]
+            , Html.button
                 [ class "destroy"
                 , onClick (Delete todo.todoLogId)
                 ]
                 []
             ]
-        , input
+        , Html.input
             [ class "edit"
             , value todo.content
             , name "title"
             , id ("todo-" ++ String.fromInt todo.todoLogId)
-            , onInput (UpdateEntry todo.todoLogId)
-            , onBlur (EditingEntry todo.todoLogId False)
-            , onEnter (EditingEntry todo.todoLogId False)
+            , onInput (UpdateTodo todo.todoLogId)
+            , onBlur (EditingTodo todo.todoLogId False)
+            , onEnter (EditingTodo todo.todoLogId False)
             ]
             []
         ]
@@ -358,7 +387,7 @@ viewEntry todo =
 -- VIEW CONTROLS AND FOOTER
 
 
-viewControls : String -> List Entry -> Html Msg
+viewControls : String -> List Todo -> Html.Html Msg
 viewControls visibility entries =
     let
         entriesCompleted =
@@ -367,7 +396,7 @@ viewControls visibility entries =
         entriesLeft =
             List.length entries - entriesCompleted
     in
-        footer
+        Html.footer
             [ class "footer"
             , hidden (List.isEmpty entries)
             ]
@@ -377,7 +406,7 @@ viewControls visibility entries =
             ]
 
 
-viewControlsCount : Int -> Html Msg
+viewControlsCount : Int -> Html.Html Msg
 viewControlsCount entriesLeft =
     let
         item_ =
@@ -386,55 +415,55 @@ viewControlsCount entriesLeft =
             else
                 " items"
     in
-        span
+        Html.span
             [ class "todo-count" ]
-            [ strong [] [ text (String.fromInt entriesLeft) ]
-            , text (item_ ++ " left")
+            [ Html.strong [] [ Html.text (String.fromInt entriesLeft) ]
+            , Html.text (item_ ++ " left")
             ]
 
 
-viewControlsFilters : String -> Html Msg
+viewControlsFilters : String -> Html.Html Msg
 viewControlsFilters visibility =
-    ul
+    Html.ul
         [ class "filters" ]
         [ visibilitySwap "#/" "All" visibility
-        , text " "
+        , Html.text " "
         , visibilitySwap "#/active" "Active" visibility
-        , text " "
+        , Html.text " "
         , visibilitySwap "#/done" "Completed" visibility
         ]
 
 
-visibilitySwap : String -> String -> String -> Html Msg
+visibilitySwap : String -> String -> String -> Html.Html Msg
 visibilitySwap uri visibility actualVisibility =
-    li
+    Html.li
         [ onClick (ChangeVisibility visibility) ]
-        [ a [ href uri, classList [ ( "selected", visibility == actualVisibility ) ] ]
-            [ text visibility ]
+        [ Html.a [ href uri, classList [ ( "selected", visibility == actualVisibility ) ] ]
+            [ Html.text visibility ]
         ]
 
 
-viewControlsClear : Int -> Html Msg
+viewControlsClear : Int -> Html.Html Msg
 viewControlsClear entriesCompleted =
-    button
+    Html.button
         [ class "clear-done"
         , hidden (entriesCompleted == 0)
         , onClick DeleteComplete
         ]
-        [ text ("Clear done (" ++ String.fromInt entriesCompleted ++ ")")
+        [ Html.text ("Clear done (" ++ String.fromInt entriesCompleted ++ ")")
         ]
 
 
-infoFooter : Html msg
+infoFooter : Html.Html msg
 infoFooter =
-    footer [ class "info" ]
-        [ p [] [ text "Double-click to edit a todo" ]
-        , p []
-            [ text "Written by "
-            , a [ href "https://github.com/evancz" ] [ text "Evan Czaplicki" ]
+    Html.footer [ class "info" ]
+        [ Html.p [] [ Html.text "Double-click to edit a todo" ]
+        , Html.p []
+            [ Html.text "Written by "
+            , Html.a [ href "https://github.com/evancz" ] [ Html.text "Evan Czaplicki" ]
             ]
-        , p []
-            [ text "Part of "
-            , a [ href "http://todomvc.com" ] [ text "TodoMVC" ]
+        , Html.p []
+            [ Html.text "Part of "
+            , Html.a [ href "http://todomvc.com" ] [ Html.text "TodoMVC" ]
             ]
         ]
