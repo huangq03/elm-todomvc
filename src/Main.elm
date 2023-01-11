@@ -21,6 +21,7 @@ import Html.Keyed as Keyed
 import Html.Lazy exposing (lazy, lazy2)
 import Json.Decode as Json
 import Task
+import Time
 
 
 main : Program (Maybe Model) Model Msg
@@ -58,16 +59,19 @@ updateWithStorage msg model =
 type alias Model =
     { entries : List Entry
     , field : String
-    , uid : Int
     , visibility : String
     }
 
 
 type alias Entry =
-    { description : String
-    , completed : Bool
+    { content : String
+    , deadline : Int
+    , done : Bool
+    , todoLogId : Int
+    , todoId : Int
+    , repeatType: String
+    , status: String
     , editing : Bool
-    , id : Int
     }
 
 
@@ -76,16 +80,19 @@ emptyModel =
     { entries = []
     , visibility = "All"
     , field = ""
-    , uid = 0
     }
 
 
-newEntry : String -> Int -> Entry
-newEntry desc id =
-    { description = desc
-    , completed = False
+newEntry : String -> Entry
+newEntry desc =
+    { content = desc
+    , deadline = 0
+    , done = False
+    , todoLogId = 0
+    , todoId = 0
+    , repeatType = ""
+    , status = "Ongoing"
     , editing = False
-    , id = id
     }
 
 
@@ -127,13 +134,12 @@ update msg model =
 
         Add ->
             ( { model
-                | uid = model.uid + 1
-                , field = ""
+                | field = ""
                 , entries =
                     if String.isEmpty model.field then
                         model.entries
                     else
-                        model.entries ++ [ newEntry model.field model.uid ]
+                        model.entries ++ [ newEntry model.field ]
               }
             , Cmd.none
             )
@@ -146,7 +152,7 @@ update msg model =
         EditingEntry id isEditing ->
             let
                 updateEntry t =
-                    if t.id == id then
+                    if t.todoLogId == id then
                         { t | editing = isEditing }
                     else
                         t
@@ -161,8 +167,8 @@ update msg model =
         UpdateEntry id task ->
             let
                 updateEntry t =
-                    if t.id == id then
-                        { t | description = task }
+                    if t.todoLogId == id then
+                        { t | content = task }
                     else
                         t
             in
@@ -171,20 +177,20 @@ update msg model =
             )
 
         Delete id ->
-            ( { model | entries = List.filter (\t -> t.id /= id) model.entries }
+            ( { model | entries = List.filter (\t -> t.todoLogId /= id) model.entries }
             , Cmd.none
             )
 
         DeleteComplete ->
-            ( { model | entries = List.filter (not << .completed) model.entries }
+            ( { model | entries = List.filter (not << .done) model.entries }
             , Cmd.none
             )
 
         Check id isCompleted ->
             let
                 updateEntry t =
-                    if t.id == id then
-                        { t | completed = isCompleted }
+                    if t.todoLogId == id then
+                        { t | done = isCompleted }
                     else
                         t
             in
@@ -195,7 +201,7 @@ update msg model =
         CheckAll isCompleted ->
             let
                 updateEntry t =
-                    { t | completed = isCompleted }
+                    { t | done = isCompleted }
             in
             ( { model | entries = List.map updateEntry model.entries }
             , Cmd.none
@@ -267,16 +273,16 @@ viewEntries visibility entries =
         isVisible todo =
             case visibility of
                 "Completed" ->
-                    todo.completed
+                    todo.done
 
                 "Active" ->
-                    not todo.completed
+                    not todo.done
 
                 _ ->
                     True
 
         allCompleted =
-            List.all .completed entries
+            List.all .done entries
 
         cssVisibility =
             if List.isEmpty entries then
@@ -310,39 +316,39 @@ viewEntries visibility entries =
 
 viewKeyedEntry : Entry -> ( String, Html Msg )
 viewKeyedEntry todo =
-    ( String.fromInt todo.id, lazy viewEntry todo )
+    ( String.fromInt todo.todoLogId, lazy viewEntry todo )
 
 
 viewEntry : Entry -> Html Msg
 viewEntry todo =
     li
-        [ classList [ ( "completed", todo.completed ), ( "editing", todo.editing ) ] ]
+        [ classList [ ( "done", todo.done ), ( "editing", todo.editing ) ] ]
         [ div
             [ class "view" ]
             [ input
                 [ class "toggle"
                 , type_ "checkbox"
-                , checked todo.completed
-                , onClick (Check todo.id (not todo.completed))
+                , checked todo.done
+                , onClick (Check todo.todoLogId (not todo.done))
                 ]
                 []
             , label
-                [ onDoubleClick (EditingEntry todo.id True) ]
-                [ text todo.description ]
+                [ onDoubleClick (EditingEntry todo.todoLogId True) ]
+                [ text todo.content ]
             , button
                 [ class "destroy"
-                , onClick (Delete todo.id)
+                , onClick (Delete todo.todoLogId)
                 ]
                 []
             ]
         , input
             [ class "edit"
-            , value todo.description
+            , value todo.content
             , name "title"
-            , id ("todo-" ++ String.fromInt todo.id)
-            , onInput (UpdateEntry todo.id)
-            , onBlur (EditingEntry todo.id False)
-            , onEnter (EditingEntry todo.id False)
+            , id ("todo-" ++ String.fromInt todo.todoLogId)
+            , onInput (UpdateEntry todo.todoLogId)
+            , onBlur (EditingEntry todo.todoLogId False)
+            , onEnter (EditingEntry todo.todoLogId False)
             ]
             []
         ]
@@ -356,7 +362,7 @@ viewControls : String -> List Entry -> Html Msg
 viewControls visibility entries =
     let
         entriesCompleted =
-            List.length (List.filter .completed entries)
+            List.length (List.filter .done entries)
 
         entriesLeft =
             List.length entries - entriesCompleted
@@ -395,7 +401,7 @@ viewControlsFilters visibility =
         , text " "
         , visibilitySwap "#/active" "Active" visibility
         , text " "
-        , visibilitySwap "#/completed" "Completed" visibility
+        , visibilitySwap "#/done" "Completed" visibility
         ]
 
 
@@ -411,11 +417,11 @@ visibilitySwap uri visibility actualVisibility =
 viewControlsClear : Int -> Html Msg
 viewControlsClear entriesCompleted =
     button
-        [ class "clear-completed"
+        [ class "clear-done"
         , hidden (entriesCompleted == 0)
         , onClick DeleteComplete
         ]
-        [ text ("Clear completed (" ++ String.fromInt entriesCompleted ++ ")")
+        [ text ("Clear done (" ++ String.fromInt entriesCompleted ++ ")")
         ]
 
 
